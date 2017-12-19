@@ -8,7 +8,9 @@ namespace AutomationApi.Models
     public class AgvData
     {
         public int Id { get; set; }
+        public string Factory { get; set; }
         public string Date { get; set; }
+        public string Shift { get; set; }
         public string Dept { get; set; }
         public string Block { get; set; }
         public string Name { get; set; }
@@ -28,16 +30,3 @@ namespace AutomationApi.Models
     }
 }
 
-    //"Id": "0",
-    //"Name": "AGV44",
-    //"EMG": "7.24517274000002",
-    //"Safety": "29.0345109866662",
-    //"Stop": "39.1170687083342",
-    //"Out line": "1.55870273166667",
-    //"Battery empty": "0",
-    //"No cart": "1.87200328833334",
-    //"Normal": "213.153574401651",
-    //"Free": "16.3363486816667",
-    //"Pole error": "1.01712178833333",
-    //"Disconnect": "140.223966283341",
-    //"Shutdown": "5.71871004500315"

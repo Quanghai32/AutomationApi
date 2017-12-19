@@ -9,6 +9,7 @@ using System.Collections;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.EntityFrameworkCore.Internal;
 using AutomationApi.Datas;
+using Microsoft.EntityFrameworkCore;
 
 // For more information on enabling Web API for empty projects, visit http://go.microsoft.com/fwlink/?LinkID=397860
 
@@ -18,79 +19,98 @@ namespace AutomationApi.Controllers
     [Route("api/[controller]")]
     public class AgvController : Controller
     {
-        public struct Department
+        class OperationRate
         {
-            public int _id;
-            public string _name;
-            public List<string> _block;
+            public string Date { get; set; }
+            public float Rate { get; set; }
         }
+        class Part
+        {
+            public string Name { get; set; }
+            public int? Target { get; set; }
+            public double? CycleTime { get; set; }
+            public int Count { get; set; }
+        }
+        class PartCount
+        {
+            public string Name { get; set; }
+            public int Count { get; set; }
+        }
+
         public readonly DataAnalyzeContext _dBContext;
         public AgvController(DataAnalyzeContext dbContext)
         {
             _dBContext = dbContext;
         }
 
-        //[HttpGet("Test/{fromDate}/{toDate}/{shift}{fac}/{dept}/{block}")]
-        //public JsonResult Test(string fromDate, string toDate, string shift, string fac, string dept, string block)
-        //{
-        //    AnalyzeData a = new AnalyzeData(_dBContext);
-        //    var data = a.GetAgvOperation(fromDate, toDate, shift, fac, dept, block);
-        //    return Json(data, new JsonSerializerSettings { Formatting = Formatting.Indented });
-        //}
+        [HttpGet("GetPerformanceDashboard/{_fact}/{_dept}/{_block}/{_fromdate}/{_todate}/{_isDay}/{_isNight}")]
+        public JsonResult GetPerformanceDashboard(string _fact, string _dept, string _block, string _fromdate, string _todate, bool _isDay, bool _isNight)
+        {
+            string day = "";
+            if ((_isDay ^ _isNight))
+            {
+                if (_isDay) day = "day";
+                if (_isNight) day = "night";
+            }
+            var query = _dBContext.Agv_Performances
+                .Where(d => d.Factory == _fact && d.Dept == _dept && d.Block == _block && ((day != "") ? d.Shift == day : true))
+                .GroupBy(d => new { d.Date, d.Factory, d.Dept, d.Block })
+                .Select(d => new
+                {
+                    Factory = d.Select(e => e.Factory).First(),
+                    Dept = d.Select(e => e.Dept).First(),
+                    Block = d.Select(e => e.Block).First(),
+                    Date = d.Select(e => e.Date.ToString("yyyy-MMM-dd")).First(),
+                    Shift = d.Select(e => e.Shift).First(),
+                    Operation_Rate = Math.Round(d.Average(e => e.Operation_Rate), 1),
+                    SupplyPart_Rate = Math.Round(d.Average(e => e.SupplyPart_Rate), 1)
+                })
+                //.OrderBy(d => d.Date)
+                .ToList();
+            return Json(query, new JsonSerializerSettings { Formatting = Formatting.Indented });
+        }
 
         [HttpGet]
         [Route("GetDeptList")]
-        public JsonResult GetDeptList()
+        public string GetDeptList()
         {
-            List<Department> DeptList = new List<Department>();
-            var query = _dBContext.AgvDatas.Select(d => new { d.Block, d.Dept })
-                 .GroupBy(d => d.Block).Select(d => d.First())//.OrderBy(d => d.Dept)
-                 .ToList();
-            string deptName = "";
-            int deptId = 0;
-
-            for (int i = 0; i < query.Count; i++)
+            var deptList = _dBContext.Factorys.Include(d => d.Depts)
+                .ThenInclude(d => d.Blocks)
+                .Select(d => d).ToList();
+            //return Json(deptList, new JsonSerializerSettings { Formatting = Formatting.Indented });
+            return JsonConvert.SerializeObject(deptList, Formatting.Indented, new JsonSerializerSettings()
             {
-                if (query[i].Dept != deptName)
-                {
-                    DeptList.Add(new Department { _id = deptId++, _name = query[i].Dept, _block = new List<string>() });
-                    deptName = query[i].Dept;
-                }
-            }
-
-            for (int i = 0; i < query.Count; i++)
-            {
-                for (int deptNum = 0; deptNum < DeptList.Count; deptNum++)
-                {
-                    if (query[i].Dept == DeptList[deptNum]._name)
-                    {
-                        DeptList[deptNum]._block.Add(query[i].Block);
-                    }
-                }
-            }
-
-            return Json(DeptList, new JsonSerializerSettings { Formatting = Formatting.Indented });
+                ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore
+            });
         }
 
-        [HttpGet("GetAgvList/{_dept}/{_block}/{_date}")]
-        public JsonResult GetAgvList(string _dept, string _block, string _date)
+        [HttpGet("GetAgvList/{_fact}/{_dept}/{_block}/{_date}/{_isDay}/{_isNight}")]
+        public JsonResult GetAgvList(string _fact, string _dept, string _block, string _date, bool _isDay, bool _isNight)
         {
-            List<string> listAgv = new List<string>();
+            string day = "";
+            if ((_isDay ^ _isNight))
+            {
+                if (_isDay) day = "day";
+                if (_isNight) day = "night";
+            }
             var query = _dBContext.AgvDatas
-                .Where(d => d.Dept == _dept && d.Block == _block && d.Date == _date)
+                .Where(d => d.Factory == _fact && d.Dept == _dept && d.Block == _block && d.Date == _date)
                 .Select(d => d.Name)
-                 .ToList();
-            for (int i = 0; i < query.Count; i++)
-            {
-                listAgv.Add(query[i]);
-            }
-            return Json(listAgv, new JsonSerializerSettings { Formatting = Formatting.Indented });
+                .Distinct()
+                .ToList();
+            return Json(query, new JsonSerializerSettings { Formatting = Formatting.Indented });
         }
 
-        [HttpGet("GetAgvOperationRate/{_dept}/{_block}/{_fromDate}/{_toDate}")]
-        public JsonResult GetAgvOperationRate(string _dept, string _block, string _fromDate, string _toDate)
+        [HttpGet("GetAgvOperationRate/{_fact}/{_dept}/{_block}/{_date}/{_isDay}/{_isNight}")]
+        public JsonResult GetAgvOperationRate(string _fact, string _dept, string _block, string _date, bool _isDay, bool _isNight)
         {
-            var agvRate = _dBContext.AgvDatas.Where(d => d.Date == _fromDate && d.Dept == _dept && d.Block == _block)
+            string day = "";
+            if ((_isDay ^ _isNight))
+            {
+                if (_isDay) day = "day";
+                if (_isNight) day = "night";
+            }
+            var agvRate = _dBContext.AgvDatas.Where(d => d.Factory == _fact && d.Dept == _dept && d.Block == _block && d.Date == _date && ((day != "") ? d.Shift == day : true))
                 .Select(i => new
                 {
                     i.Id,
@@ -106,31 +126,77 @@ namespace AutomationApi.Controllers
                     i.Free,
                     i.Disconnect,
                     i.Out_Of_Line,
-                    i.Total
+                    i.Total,
                 })
                 .ToList();
+            if (agvRate.Count == 0) return Json("");
             return Json(agvRate, new JsonSerializerSettings { Formatting = Formatting.Indented });
         }
 
-        //http://localhost:64905/api/agv/GetAgvOperationRate/assy3/d8182/yyyy-MM-dd/yyyy-MM-dd/agv15
-        [HttpGet("GetSupplyTime/{_dept}/{_block}/{_fromDate}/{_toDate}/{_agv}")]
-        public JsonResult GetSupplyTime(string _dept, string _block, string _fromDate, string _toDate, string _agv)
+        //them tong so lan cap cua block
+        [HttpGet("GetAgvSupply/{_fact}/{_dept}/{_block}/{_date}/{_isDay}/{_isNight}")]
+        public JsonResult GetAgvSupply(string _fact, string _dept, string _block, string _date, bool _isDay, bool _isNight)
         {
+            string day = "";
+            if ((_isDay ^ _isNight))
+            {
+                if (_isDay) day = "day";
+                if (_isNight) day = "night";
+            }
             var agvSupplyTime = _dBContext.AgvSupplys
-                .Where(d => d.Date == _fromDate && d.Dept == _dept && d.Block == _block && d.AgvName == _agv)
-                .Select(i => new { i.AgvName, i.SupplyTime, i.StartTime, i.EndTime, i.Route, i.Part })
-                .OrderBy(r => r.Route)
-                .ToList();
+                .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && ((day != "") ? d.Shift == day : true))
+                .Select(d => d.AgvName)
+                .GroupBy(d => d)
+                .Select(g => new
+                {
+                    AgvName = g.Distinct().First(),
+                    TotalSupply = g.Count()
+                });
+            var totalSupply = _dBContext.AgvSupplys
+                 .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && ((day != "") ? d.Shift == day : true))
+                 .Select(d => new { d.Part, d.TotalSupplyTarget })
+                 .GroupBy(d => d.Part)
+                 .Select(d => d.First())
+                 .Sum(d => d.TotalSupplyTarget);
 
             return Json(agvSupplyTime, new JsonSerializerSettings { Formatting = Formatting.Indented });
         }
 
-        //http://localhost:64905/api/agv/GetAgvSupplyOperation/2017-08-07/assy3/d8182/agv15/09:25:08
-        [HttpGet("GetAgvSupplyOperation/{_date}/{_dept}/{_block}/{_agv}/{_startTime}")]
-        public JsonResult GetAgvSupplyOperation(string _date, string _dept, string _block, string _agv, string _startTime)
+        //them target time
+        [HttpGet("GetSupplyTime/{_fact}/{_dept}/{_block}/{_date}/{_isDay}/{_isNight}/{_agv}")]
+        public JsonResult GetSupplyTime(string _fact, string _dept, string _block, string _date, bool _isDay, bool _isNight, string _agv)
+        {
+            string day = "";
+            if ((_isDay ^ _isNight))
+            {
+                if (_isDay) day = "day";
+                if (_isNight) day = "night";
+            }
+            var agvSupplyTime = _dBContext.AgvSupplys
+                .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && ((day != "") ? d.Shift == day : true))
+                .Select(i => new
+                {
+                    i.AgvName,
+                    i.SupplyTime,
+                    i.StartTime,
+                    i.EndTime,
+                    i.Route,
+                    i.Part,
+                    i.Description,
+                    i.CycleTimeTarget
+                })
+                .OrderBy(r => r.Route)
+                .ToList();
+            if (agvSupplyTime.Count == 0) return Json("");
+            return Json(agvSupplyTime, new JsonSerializerSettings { Formatting = Formatting.Indented });
+        }
+
+        //
+        [HttpGet("GetAgvSupplyOperation/{_fact}/{_dept}/{_block}/{_date}/{_agv}/{_startTime}")]
+        public JsonResult GetAgvSupplyOperation(string _fact, string _dept, string _block, string _date, string _agv, string _startTime)
         {
             var agvSupply = _dBContext.AgvSupplys
-                .Where(d => d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
+                .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
                 .Select(i => new
                 {
                     i.AgvName,
@@ -142,117 +208,133 @@ namespace AutomationApi.Controllers
                     i.EMERGENCY,
                     i.NO_CART,
                     i.POLE_ERROR,
-                    i.OUT_OF_LINE
+                    i.OUT_OF_LINE,
+                    i.Description
                 })
                 .ToList();
+            if (agvSupply.Count == 0) return Json("");
             return new JsonResult(agvSupply, new JsonSerializerSettings { Formatting = Formatting.Indented });
         }
 
-        //http://localhost:64905/api/agv/GetAgvSupplyOperation/2017-08-07/assy3/d8182/agv15/09:25:08/normal
-        [HttpGet("GetAgvSupplyDetail/{_date}/{_dept}/{_block}/{_agv}/{_startTime}/{_stt}")]
-        public JsonResult GetAgvSupplyDetail(string _date, string _dept, string _block, string _agv, string _startTime, string _stt)
+        //
+        [HttpGet("GetAgvSupplyDetail/{_fact}/{_dept}/{_block}/{_date}/{_agv}/{_startTime}/{_stt}")]
+        public JsonResult GetAgvSupplyDetail(string _fact, string _dept, string _block, string _date, string _agv, string _startTime, string _stt)
         {
-            object agvSupplyDetail = null;
+            string agvSupplyDetail = null;
             switch (_stt)
             {
                 case "normal":
                     agvSupplyDetail = _dBContext.AgvSupplys
-                      .Where(d => d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
-                      .Select(i => new
-                      {
-                          i.NORMAL_DETAIL,
-                      })
-                      .ToList(); break;
+                    .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
+                    .Select(i => i.NORMAL_DETAIL)
+                    .First();
+                    break;
                 case "stop":
                     agvSupplyDetail = _dBContext.AgvSupplys
-                    .Where(d => d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
-                    .Select(i => new
-                    {
-                        i.STOP_BY_CARD_DETAIL,
-                    })
-                    .ToList();
+                    .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
+                    .Select(i => i.STOP_BY_CARD_DETAIL)
+                    .First();
                     break;
                 case "safety":
                     agvSupplyDetail = _dBContext.AgvSupplys
-                    .Where(d => d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
-                    .Select(i => new
-                    {
-                        i.SAFETY_DETAIL,
-                    })
-                    .ToList();
+                    .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
+                    .Select(i => i.SAFETY_DETAIL)
+                    .First();
                     break;
                 case "emergency":
                     agvSupplyDetail = _dBContext.AgvSupplys
-                    .Where(d => d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
-                    .Select(i => new
-                    {
-                        i.EMERGENCY_DETAIL,
-                    })
-                    .ToList();
+                    .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
+                    .Select(i => i.EMERGENCY_DETAIL)
+                    .First();
                     break;
                 case "batterylow":
                     agvSupplyDetail = _dBContext.AgvSupplys
-                    .Where(d => d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
-                    .Select(i => new
-                    {
-                        i.BATTERY_EMPTY_DETAIL,
-                    })
-                    .ToList();
+                    .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
+                    .Select(i => i.BATTERY_EMPTY_DETAIL)
+                    .First();
                     break;
                 case "pole":
                     agvSupplyDetail = _dBContext.AgvSupplys
-                    .Where(d => d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
-                    .Select(i => new
-                    {
-                        i.POLE_ERROR_DETAIL,
-                    })
-                    .ToList();
+                    .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
+                    .Select(i => i.POLE_ERROR_DETAIL)
+                    .First();
                     break;
                 case "outline":
                     agvSupplyDetail = _dBContext.AgvSupplys
-                    .Where(d => d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
-                    .Select(i => new
-                    {
-                        i.OUT_OF_LINE_DETAIL,
-                    })
-                    .ToList();
+                    .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
+                    .Select(i => i.OUT_OF_LINE_DETAIL)
+                    .First();
                     break;
                 case "nocart":
                     agvSupplyDetail = _dBContext.AgvSupplys
-                    .Where(d => d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
-                    .Select(i => new
-                    {
-                        i.NO_CART_DETAIL,
-                    })
-                    .ToList();
+                    .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && d.AgvName == _agv && d.StartTime == _startTime)
+                    .Select(i => i.NO_CART_DETAIL)
+                    .First();
                     break;
             }
 
             if (agvSupplyDetail != null)
             {
-                string[] arr = ((IEnumerable)agvSupplyDetail).Cast<object>()
-                                             .Select(x => x.ToString())
-                                             .ToArray();
-                string[] ret = arr[0].Split(',');
-                return Json(ret, new JsonSerializerSettings { Formatting = Formatting.Indented });
+                //List<string> arr = ((IEnumerable)agvSupplyDetail).Cast<object>()
+                //                              .Select(x => x.ToString().Trim().Replace("\r\n", string.Empty))
+                //                              .ToList();
+                agvSupplyDetail = agvSupplyDetail.TrimEnd(',');
+                string[] ret = agvSupplyDetail.Split(',');
+                return Json(ret);
+
             }
-            else
-            {
-                return null;
-            }
+
+            return Json("");
 
         }
-        //http://localhost:64905/api/agv/GetPartSupplyed/assy3/d8182/2017-08-07/2017-08-07/mid 20
-        [HttpGet("GetPartSupplyed/{_dept}/{_block}/{_fromDate}/{_toDate}/{_part}")]
-        public JsonResult GetPartSupplyed(string _dept, string _block, string _fromDate, string _toDate, string _part)
+
+        //
+        [HttpGet("GetPartSupply/{_fact}/{_dept}/{_block}/{_date}/{_isDay}/{_isNight}")]
+        public JsonResult GetPartSupply(string _fact, string _dept, string _block, string _date, bool _isDay, bool _isNight)
         {
-            var agvSupplyTime = _dBContext.AgvSupplys
-                .Where(d => d.Date == _fromDate && d.Dept == _dept && d.Block == _block && d.Part == _part)
-                .Select(i => new { i.AgvName, i.SupplyTime, i.StartTime, i.EndTime, i.Route, i.Part })
-                .OrderBy(r => r.AgvName)
+            string day = "";
+            if ((_isDay ^ _isNight))
+            {
+                if (_isDay) day = "day";
+                if (_isNight) day = "night";
+            }
+            List<Part> partSupply = _dBContext.AgvSupplys
+                .Where(d => d.Factory == _fact && d.Date == _date && d.Dept == _dept && d.Block == _block && ((day != "") ? d.Shift == day : true))
+                .Select(d => new Part { Name = d.Part, Target = d.TotalSupplyTarget, CycleTime = d.CycleTimeTarget })
                 .ToList();
 
-            return Json(agvSupplyTime, new JsonSerializerSettings { Formatting = Formatting.Indented });
+            List<PartCount> partCount = partSupply
+                .GroupBy(d => d.Name)
+                .Select(d => new PartCount
+                {
+                    Name = d.Key,
+                    Count = d.Count()
+                })
+                .ToList();
+
+            var y = partSupply
+                .GroupBy(d => d.Name)
+                .Select(g => g.First())
+                .Join(partCount, p => p.Name, c => c.Name, (p, c) => new
+                {
+                    Name = p.Name,
+                    Target = p.Target,
+                    Cycle = p.CycleTime,
+                    Count = c.Count
+                })
+                .ToList();
+
+            return new JsonResult(y, new JsonSerializerSettings { Formatting = Formatting.Indented });
+
+            //var x = from p in partSupply
+            //        join c in partCount on p.Name equals c.Name
+            //        select new
+            //        {
+            //            Name = p.Name,
+            //            Target = p.Target,
+            //            Cycle = p.CycleTime,
+            //            Count = c.Count
+            //        };
         }
 
         // GET: api/values
